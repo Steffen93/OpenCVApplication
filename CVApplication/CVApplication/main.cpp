@@ -19,8 +19,11 @@
 #include "opencv2/opencv.hpp"
 #include <math.h>
 #include <time.h>
+#include "Blob.h"
 
 using namespace cv;
+
+double getDistance(Blob, Blob);
 
 int main (void)
 {
@@ -33,7 +36,7 @@ int main (void)
 		return -1;
 	}
 
-	Mat frame, original; // matrices for image storing
+	Mat frame, original, orig_restore; // matrices for image storing
 
 	//CvFont font = fontQt("Times"); // requires Qt lib & Qt-enabled OpenCV (see OpenCV documentation!)
 
@@ -42,6 +45,10 @@ int main (void)
 
 	char buffer [10]; // buffer for int to ascii conversion -> itoa(...)
 
+	vector<Blob> lastCenters;
+	vector<Blob> currCenters;
+	vector<bool> isVisited;
+	int idCounter = 0;
 	for(;;) // endless loop, do frame grabbing and image processing here
 	{
 		ms_start = clock(); // time start
@@ -57,6 +64,7 @@ int main (void)
 
 		original = frame.clone(); // copy frame to original
 		absdiff(frame, image, frame);
+		orig_restore = frame.clone();
 		blur(frame, original, Size(20,20));
 		absdiff(frame, original, original);
 		blur(original, original, Size(10,10));
@@ -65,9 +73,12 @@ int main (void)
 		vector<vector<Point>> contours;
 		vector<Vec4i> hierarchy;
 		cvtColor(original, original, CV_BGR2GRAY);
+		cvtColor(orig_restore, orig_restore, CV_BGR2GRAY);
 		findContours( original, contours, hierarchy, CV_RETR_CCOMP,
 			CV_CHAIN_APPROX_SIMPLE );
 		// iterate through all the top-level contours -> "hierarchy" may not be empty!)
+		currCenters.clear();
+		isVisited.clear();
 		if( hierarchy.size() > 0 )
 		{
 			for( int idx = 0; idx >= 0; idx = hierarchy[idx][0] )
@@ -77,19 +88,50 @@ int main (void)
 					ellipse(original, fitEllipse(Mat(contours.at(idx))),
 						Scalar(0,0,255), 1,
 						8); // fit & draw ellipse to contour at index "idx"
-						drawContours(original, contours, idx, Scalar(255,0,0), 1, 8,
+					int x = fitEllipse(Mat(contours.at(idx))).center.x;
+					int y = fitEllipse(Mat(contours.at(idx))).center.y;
+					int size = 8;
+					line(original, Point(x, y-size), Point(x, y+size), Scalar(255,255,255));
+					line(original, Point(x-size, y), Point(x+size, y), Scalar(255,255,255));
+					drawContours(original, contours, idx, Scalar(255,0,0), 1, 8,
 						hierarchy); // draw contour at index "idx"
+					currCenters.push_back(Blob(x,y));
+					isVisited.push_back(false);
 				}
 			}
 		}
+		double min_dist = 100000.0;
+		double dist = 0.0;
+		int closestBlob = -1;
+		for(int i = 0; i < lastCenters.size(); i++){
+			min_dist = 1000000.0;
+			for (int j = 0; j < currCenters.size(); j++){
+				dist = getDistance (currCenters[j], lastCenters[i]);
+				if(dist < min_dist){
+					min_dist = dist;
+					closestBlob = j;
+				}
+			}
 
-		//fancy stuff
-
-
-
+			if(closestBlob != -1){
+				currCenters[closestBlob].setID(lastCenters[i].getID());
+				isVisited[closestBlob] = true;
+			}
+			putText(original, std::to_string(lastCenters[i].getID()), cvPoint(lastCenters[i].getX()+8,lastCenters[i].getY()-8), FONT_HERSHEY_PLAIN, 1, CV_RGB(255,255,255), 1, 8); // write framecounter to the image (useful for debugging)
+			//j: nearest neighbour => curr i == last j
+			//=> last j: id
+		}
+		//fancy magic
+		lastCenters.clear();
+		for (int i = 0; i < currCenters.size(); i++){
+			lastCenters.push_back(currCenters.at(i));
+		}
+		
 		// time end
 		ms_end = clock();
 		ms_time = ms_end - ms_start;
+		
+		add(original, orig_restore, original);
 
 		putText(original, "frame #"+(string)_itoa(currentFrame, buffer, 10), cvPoint(0,15), FONT_HERSHEY_PLAIN, 1, CV_RGB(255,255,255), 1, 8); // write framecounter to the image (useful for debugging)
 		putText(original, "time per frame: "+(string)_itoa(ms_time, buffer, 10)+"ms", cvPoint(0,30), FONT_HERSHEY_PLAIN, 1, CV_RGB(255,255,255), 1, 8); // write calculation time per frame to the image
@@ -97,7 +139,7 @@ int main (void)
 		imshow("original & contours & ellipses", original); // render image to frame
 		currentFrame++; // increment frame counter
 
-		if( waitKey(1) == 27 ) // "esc" key pressed?
+		if( waitKey(50) == 27 ) // "esc" key pressed?
 		{
 			std::cout << "EXITING: User stopped the process.\n\n";
 			break;
@@ -108,3 +150,7 @@ int main (void)
 	return 0;
 }
 
+
+double getDistance (Blob p1, Blob p2){
+	return std::sqrt((p2.getX()-p1.getX())*(p2.getX()-p1.getX())+(p2.getY()-p1.getY())*(p2.getY()-p1.getY()));
+}
